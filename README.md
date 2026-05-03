@@ -14,10 +14,11 @@ kubectl tool and k8s Control Plane v1.36.0 with Cilium v1.19.3 and deploy Argo C
 Configure Argo CD to maintain expected state from https://github.com/kevinayres/kubeadm-teleport/...
 
 Build workflow: 
-A single AWS EC2 VPC was created with the default Subnet, Security Group and Routing Table configuration. 
+A single AWS EC2 VPC was created with the default CIDR (172.31.0.0/16), Subnet, Security Group and Routing Table configuration. 
 Inbound SSL and HTTPS were termporarily allowed from all external IP's. 
 The cluster exists within a single network security domain to prevent the need for additional ACL's. 
 3x EC2 instances meeting the minimum hardware requirements for a k8s install were deployed into a single Availability Zone for simplicity and without regard for reliability. 
-<img width="3206" height="1510" alt="image" src="https://github.com/user-attachments/assets/005dd72e-7d97-4bbe-86c3-052a0d37f371" />
+<img width="3200" height="1490" alt="image" src="https://github.com/user-attachments/assets/378631e1-4b1f-46df-a232-407e36df7c03" />
+
 
 Install helm, kubectl, kubeadm, kubelet, containerd across nodes as appropriate.
