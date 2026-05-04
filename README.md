@@ -20,5 +20,22 @@ The cluster exists within a single network security domain to prevent the need f
 3x EC2 instances meeting the minimum hardware requirements for a k8s install were deployed into a single Availability Zone for simplicity and without regard for reliability. 
 <img width="3200" height="1490" alt="image" src="https://github.com/user-attachments/assets/378631e1-4b1f-46df-a232-407e36df7c03" />
 
+Provision nodes
 
+
+
+→ Prepare Linux OS
+→ Install containerd runtime
+→ Install kubelet, kubeadm, kubectl
+→ Initialize control plane with kubeadm
+→ Configure kubectl access
+→ Install CNI networking
+→ Join worker nodes
+→ Validate cluster
+→ Add storage, ingress, monitoring, security, and apps
 Install helm, kubectl, kubeadm, kubelet, containerd across nodes as appropriate.
+
+REFERENCES: 
+https://kubernetes.io/docs
+https://github.com/containerd/containerd/blob/main/docs/getting-started.md
+$ tar Cxzvf /usr/local containerd-2.3.0-linux-amd64.tar.gz
