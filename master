@@ -77,7 +77,7 @@ sudo cp -i /etc/kubernetes/admin.conf $HOME/.kube/config
 sudo chown $(id -u):$(id -g) $HOME/.kube/config
 kubectl get nodes 
 # move to worker node configuration
-# to join cluster: sudo kubeadm join 172.31.81.75:6443 --token 38qumi.hdtsa94w1hfr6n9d --discovery-token-ca-cert-hash sha256:9a886f7dea33d7c35a92c0973200192443817d100492a57b7903410a16b0f393 
+# join worker nodes to cluster
 
 # pods come up in Pending state without Service Mesh
 # install Cilium CLI
