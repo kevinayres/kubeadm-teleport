@@ -10,7 +10,7 @@ A single repo for all functions. No separation of configuration from images.
 Default naming conventions for VPC, security groups, etc. 
 Public IP's for all nodes in a single layer subnet design. 
 A single k8s environment without staging using latest stable bits. Including: 
-kubectl tool and k8s Control Plane v1.36.0 with Cilium v1.19.3 and deploy Argo CD v3.39.0 and NGINX v1.30.0
+kubectl tool and k8s Control Plane with Cilium, Argo CD, and NGINX.
 Configure Argo CD to maintain expected state from https://github.com/kevinayres/kubeadm-teleport/...
 
 Build workflow: 
