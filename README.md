@@ -19,6 +19,7 @@ Inbound SSL and HTTPS were termporarily allowed from all external IP's.
 The cluster exists within a single network security domain to prevent the need for additional ACL's. 
 3x EC2 instances meeting the minimum hardware requirements for a k8s install were deployed into a single Availability Zone for simplicity and without regard for reliability. 
 <img width="3200" height="1490" alt="image" src="https://github.com/user-attachments/assets/378631e1-4b1f-46df-a232-407e36df7c03" />
+<img width="2942" height="488" alt="image" src="https://github.com/user-attachments/assets/c8a072e9-68cb-434f-9262-110713b4dbf2" />
 
 Provision nodes
 
