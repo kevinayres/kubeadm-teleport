@@ -21,21 +21,25 @@ The cluster exists within a single network security domain to prevent the need f
 <img width="3200" height="1490" alt="image" src="https://github.com/user-attachments/assets/378631e1-4b1f-46df-a232-407e36df7c03" />
 <img width="2942" height="488" alt="image" src="https://github.com/user-attachments/assets/c8a072e9-68cb-434f-9262-110713b4dbf2" />
 
+
 Provision nodes
+
 
 <img width="1684" height="1244" alt="image" src="https://github.com/user-attachments/assets/441b92ed-7217-4e58-a16a-234e605e93ec" />
 
-→ Prepare Linux OS
-→ Install containerd runtime
-→ Install kubelet, kubeadm, kubectl
-→ Initialize control plane with kubeadm
-→ Configure kubectl access
-→ Install CNI networking
-→ Join worker nodes
-→ Validate cluster
-→ Add storage, ingress, monitoring, security, and apps
+
+Prepare Linux OS
 Install helm, kubectl, kubeadm, kubelet, containerd across nodes as appropriate.
+Initialize control plane with kubeadm
+Configure kubectl access
+Install CNI networking
+Join worker nodes
+Validate cluster
+AWS NLB TCP passthrough to ingress-nginx, cert-manager, a self-signed internal CA, namespace-scoped RBAC, and a simple NGINX static site.
+
+
 
 REFERENCES: 
 https://kubernetes.io/docs
+
 https://github.com/containerd/containerd/blob/main/docs/getting-started.md

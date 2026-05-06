@@ -107,3 +107,73 @@ kubectl get nodes
 #sudo install -o root -g root -m 0755 kubectl /usr/local/bin/kubectl
 #kubectl version --client
 
+# ingress-nginx with fixed NodePorts
+helm upgrade --install ingress-nginx ingress-nginx \
+  --repo https://kubernetes.github.io/ingress-nginx \
+  --namespace ingress-nginx \
+  --create-namespace \
+  --set controller.service.type=NodePort \
+  --set controller.service.nodePorts.http=30080 \
+  --set controller.service.nodePorts.https=30443
+
+kubectl get svc -n ingress-nginx
+#NAME                                 TYPE        CLUSTER-IP       EXTERNAL-IP   PORT(S)                      AGE
+#ingress-nginx-controller             NodePort    10.109.168.193   <none>        80:30080/TCP,443:30443/TCP   37s
+#ingress-nginx-controller-admission   ClusterIP   10.99.225.242    <none>        443/TCP                      37s
+
+# create network load balancer and target groups
+# update security group
+
+# install certmanager
+#kubectl apply -f https://github.com/cert-manager/cert-manager/releases/download/v1.20.2/cert-manager.yaml
+#kubectl get pods -n cert-manager
+#kubectl wait --namespace cert-manager \
+#  --for=condition=ready pod \
+#  --selector=app.kubernetes.io/instance=cert-manager \
+#  --timeout=180s
+
+kubectl create namespace cert-manager
+helm repo add jetstack https://charts.jetstack.io
+helm repo update
+helm install \
+  cert-manager jetstack/cert-manager \
+  --namespace cert-manager \
+  --version v1.2.0 \
+  --create-namespace \
+  --set installCRDs=true
+kubectl get pods --namespace cert-manager
+
+# verify CRD's exist
+kubectl get crd | grep cert-manager
+
+# verify by issuing self-signed cert
+cat <<EOF > test-resources.yaml
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: cert-manager-test
+---
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: test-selfsigned
+  namespace: cert-manager-test
+spec:
+  selfSigned: {}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: selfsigned-cert
+  namespace: cert-manager-test
+spec:
+  dnsNames:
+    - example.com
+  secretName: selfsigned-cert-tls
+  issuerRef:
+    name: test-selfsigned
+EOF
+
+kubectl apply -f test-resources.yaml
+
+# check it
