@@ -1,14 +1,14 @@
 sudo apt-get update
-sudo hostnamectl set-hostname worker1|2
+sudo hostnamectl set-hostname clu-worker1|2
 
 # turn off swap
 sudo swapoff -a
 grep swap /etc/fstab
 
 # disable apparmor and ufw
-sudo systemctl disable apparmor
-sudo systemctl stop apparmor
-sudo systemctl status apparmor
+# sudo systemctl disable apparmor
+# sudo systemctl stop apparmor
+# sudo systemctl status apparmor
 
 sudo systemctl stop ufw.service
 sudo systemctl disable ufw.service
@@ -84,8 +84,7 @@ kubectl version --client
 # ec2 snapshot 2
 
 
-kubeadm join 172.31.2.73:6443 --token 7dam87.ete8x7xx6wpro024 \
-        --discovery-token-ca-cert-hash sha256:3fe90b471a87f4d12cdd7b40542d1b136652bcb5868c4e69902ee51ff4bb1ba0 
+sudo kubeadm join 172.31.85.243:6443 --token w0sp25.exuu077epxxmb906 --discovery-token-ca-cert-hash sha256:72abc8c0e0f9f68c588cce552e8fecab98f607b829b9efdbf4216a615badf8c2 
 
 # ec2 snapshot 3 
 

@@ -8,9 +8,9 @@ sudo swapoff -a
 grep swap /etc/fstab
 
 # disable apparmor and ufw
-#sudo systemctl disable apparmor
-#sudo systemctl stop apparmor
-#sudo systemctl status apparmor
+sudo systemctl disable apparmor
+sudo systemctl stop apparmor
+sudo systemctl status apparmor
 
 sudo systemctl stop ufw.service
 sudo systemctl disable ufw.service
@@ -24,9 +24,7 @@ net.ipv4.ip_forward = 1
 EOF
 sudo sysctl --system
 
-sudo reboot
-
-ip route show 
+sudo reboot 
 
 # EC2 snapshot 1
 
@@ -107,23 +105,32 @@ sudo kubeadm init \
   --pod-network-cidr=10.10.0.0/16
   --service-cidr=10.5.0.0/16 # new
 
-curl https://127.0.0.1:10257/healthz -k --insecure
-curl https://172.31.85.243:6443/livezez -k --insecure
-
 # config kubectl
 mkdir -p $HOME/.kube
 sudo cp /etc/kubernetes/admin.conf $HOME/.kube/config
 sudo chown $(id -u):$(id -g) $HOME/.kube/config
 kubectl get nodes
 # sudo kubeadm token create --print-join-command
-# kubeadm join 172.31.85.243:6443 --token w0sp25.exuu077epxxmb906 --discovery-token-ca-cert-hash sha256:72abc8c0e0f9f68c588cce552e8fecab98f607b829b9efdbf4216a615badf8c2 
+# sudo kubeadm join 172.31.2.73:6443 --token 7dam87.ete8x7xx6wpro024 --discovery-token-ca-cert-hash sha256:3fe90b471a87f4d12cdd7b40542d1b136652bcb5868c4e69902ee51ff4bb1ba0
 
-# label workers for readability
-kubectl label node clu-worker2 node-role.kubernetes.io/worker=worker
-kubectl label node clu-worker1 node-role.kubernetes.io/worker=worker
-kubectl get nodes
 kubectl get nodes -o wide
 kubectl get pods -A
+
+kubectl get nodes -o jsonpath='{range .items[*]}{.metadata.name}{" podCIDR="}{.spec.podCIDR}{"\n"}{end}'
+#clu-master podCIDR=10.10.0.0/24
+#clu-worker1 podCIDR=10.10.3.0/24
+#clu-worker2 podCIDR=10.10.2.0/24
+
+# deploy Calico with 10.10.0.0/28 CIDR
+kubectl get pods -A -w
+kubectl create -f https://raw.githubusercontent.com/projectcalico/calico/v3.32.0/manifests/v1_crd_projectcalico_org.yaml
+kubectl create -f https://raw.githubusercontent.com/projectcalico/calico/v3.32.0/manifests/tigera-operator.yaml
+curl -O https://raw.githubusercontent.com/projectcalico/calico/v3.32.0/manifests/custom-resources-bpf.yaml
+vi custom-resources-bpf.yaml
+kubectl create -f custom-resources-bpf.yaml
+watch kubectl get tigerastatus
+kubectl get pods -A --output=wide
+
 
 # ingress
 helm upgrade --install ingress-nginx ingress-nginx \
@@ -229,6 +236,10 @@ helm upgrade --install cert-manager jetstack/cert-manager \
 
 
 
+# label workers for readability
+ kubectl label node worker2 node-role.kubernetes.io/worker=worker
+ kubectl label node worker1 node-role.kubernetes.io/worker=worker
+ kubectl get nodes
 # stop
 
 kubectl wait --for=condition=Ready \
@@ -360,4 +371,175 @@ kubectl --kubeconfig=site-deployer.kubeconfig auth can-i create clusterissuers
 
 
 
+## ---------------------------------------------------------------------------------------------------------- ##
+## ---------------------------------------------------------------------------------------------------------- ##
+# install containerd 
+# https://kubernetes.io/docs/setup/production-environment/tools/kubeadm/install-kubeadm/#installing-runtime
+vi install.sh
+## 
+# Add Docker's official GPG key:
+sudo apt update
+sudo apt install ca-certificates curl
+sudo install -m 0755 -d /etc/apt/keyrings
+sudo curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+sudo chmod a+r /etc/apt/keyrings/docker.asc
+# Add the repository to Apt sources:
+sudo tee /etc/apt/sources.list.d/docker.sources <<EOF
+Types: deb
+URIs: https://download.docker.com/linux/ubuntu
+Suites: $(. /etc/os-release && echo "${UBUNTU_CODENAME:-$VERSION_CODENAME}")
+Components: stable
+Architectures: $(dpkg --print-architecture)
+Signed-By: /etc/apt/keyrings/docker.asc
+EOF
+sudo apt update
+## 
+sudo chmod 700 install.sh
+./install.sh
+sudo apt install containerd.io
+sudo systemctl status containerd
 
+# install Cilium 1.19.3 but don't replace KubeProxy
+helm repo add cilium https://helm.cilium.io/
+helm repo update
+helm upgrade --install cilium cilium/cilium \
+  --version 1.19.3 \
+  --namespace kube-system \
+  --set kubeProxyReplacement=false
+
+# confirm Cilium ready on Control Plane node
+kubectl -n kube-system rollout status ds/cilium --timeout=300s
+kubectl get pods -n kube-system -l k8s-app=cilium
+kubectl get nodes
+
+# Run on worker nodes - join cluster
+
+
+# Installing kubeadm, kubelet and kubectl 
+# https://kubernetes.io/docs/setup/production-environment/tools/kubeadm/install-kubeadm/#installing-kubeadm-kubelet-and-kubectl
+sudo apt-get update
+sudo apt-get install -y apt-transport-https ca-certificates curl gpg
+# do on worker nodes:  curl -fsSL https://pkgs.k8s.io/core:/stable:/v1.36/deb/Release.key | sudo gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+echo 'deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v1.36/deb/ /' | sudo tee /etc/apt/sources.list.d/kubernetes.list
+sudo apt-cache madison kubeadm # returns: kubeadm | 1.36.0-1.1
+sudo apt-get update
+sudo apt-get install -y kubelet=1.36.0-1.1 kubeadm=1.36.0-1.1 kubectl=1.36.0-1.1
+sudo apt-mark hold kubelet kubeadm kubectl
+sudo systemctl status kubelet
+
+# https://kubernetes.io/docs/setup/production-environment/container-runtimes/#containerd-systemd
+stat -fc %T /sys/fs/cgroup/ # returns: cgroup2fs
+sudo containerd config default | sudo tee /etc/containerd/config.toml
+sudo vi /etc/containerd/config.toml
+# SystemdCgroup = true
+sudo systemctl restart containerd
+sudo systemctl enable --now kubelet
+
+# create cluster and declare pod CIDR plus kube-proxy for Cilium
+sudo kubeadm init --pod-network-cidr=10.10.0.0/16 --skip-phases=addon/kube-proxy
+mkdir -p $HOME/.kube
+sudo cp -i /etc/kubernetes/admin.conf $HOME/.kube/config
+sudo chown $(id -u):$(id -g) $HOME/.kube/config
+kubectl get nodes 
+# move to worker node configuration
+# join worker nodes to cluster
+
+# pods come up in Pending state without Service Mesh
+# install Cilium CLI
+CILIUM_CLI_VERSION=$(curl -s https://raw.githubusercontent.com/cilium/cilium-cli/main/stable.txt)
+CLI_ARCH=amd64
+if [ "$(uname -m)" = "aarch64" ]; then CLI_ARCH=arm64; fi
+curl -L --fail --remote-name-all https://github.com/cilium/cilium-cli/releases/download/${CILIUM_CLI_VERSION}/cilium-linux-${CLI_ARCH}.tar.gz{,.sha256sum}
+sha256sum --check cilium-linux-${CLI_ARCH}.tar.gz.sha256sum
+sudo tar xzvfC cilium-linux-${CLI_ARCH}.tar.gz /usr/local/bin
+rm cilium-linux-${CLI_ARCH}.tar.gz{,.sha256sum}
+
+cilium install --version 1.19.3 --set kubeProxyReplacement=true
+# cilium status
+kubectl get pods -A -w
+kubectl get nodes
+
+
+
+
+
+
+
+# alternate install kubectl
+#curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+#curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl.sha256"
+#echo "$(cat kubectl.sha256)  kubectl" | sha256sum --check
+#sudo install -o root -g root -m 0755 kubectl /usr/local/bin/kubectl
+#kubectl version --client
+
+# ingress-nginx with fixed NodePorts for AWS NLB forward
+helm upgrade --install ingress-nginx ingress-nginx \
+  --repo https://kubernetes.github.io/ingress-nginx \
+  --namespace ingress-nginx \
+  --create-namespace \
+  --set controller.service.type=NodePort \
+  --set controller.service.nodePorts.http=30080 \
+  --set controller.service.nodePorts.https=30443
+
+kubectl get svc -n ingress-nginx
+#NAME                                 TYPE        CLUSTER-IP       EXTERNAL-IP   PORT(S)                      AGE
+#ingress-nginx-controller             NodePort    10.109.168.193   <none>        80:30080/TCP,443:30443/TCP   37s
+#ingress-nginx-controller-admission   ClusterIP   10.99.225.242    <none>        443/TCP                      37s
+
+# create network load balancer and target groups
+# update security group
+
+# install certmanager
+#kubectl apply -f https://github.com/cert-manager/cert-manager/releases/download/v1.20.2/cert-manager.yaml
+#kubectl get pods -n cert-manager
+#kubectl wait --namespace cert-manager \
+#  --for=condition=ready pod \
+#  --selector=app.kubernetes.io/instance=cert-manager \
+#  --timeout=180s
+
+kubectl create namespace cert-manager
+helm repo add jetstack https://charts.jetstack.io
+helm repo update
+helm install \
+  cert-manager jetstack/cert-manager \
+  --namespace cert-manager \
+  --version v1.2.0 \
+  --create-namespace \
+  --set installCRDs=true \
+  --set global.leaderElection.namespace=cert-manager
+kubectl get pods --namespace cert-manager
+
+# verify CRD's exist
+kubectl get crd | grep cert-manager
+
+# verify by issuing self-signed cert
+cat <<EOF > test-resources.yaml
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: cert-manager-test
+---
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: test-selfsigned
+  namespace: cert-manager-test
+spec:
+  selfSigned: {}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: selfsigned-cert
+  namespace: cert-manager-test
+spec:
+  dnsNames:
+    - example.com
+  secretName: selfsigned-cert-tls
+  issuerRef:
+    name: test-selfsigned
+EOF
+
+kubectl apply -f test-resources.yaml
+
+# check it
