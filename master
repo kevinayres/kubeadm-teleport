@@ -1,26 +1,47 @@
 #!/bin/bash
-# update and set hostname 
+# prepare OS - update and set hostname 
 sudo apt-get update
-sudo reboot
 sudo hostnamectl set-hostname master
 
 # turn off swap
 sudo swapoff -a
 grep swap /etc/fstab
 
-systemctl disable apparmor
+# disable apparmor and ufw
 sudo systemctl disable apparmor
 sudo systemctl stop apparmor
 sudo systemctl status apparmor
 
-# enable IPv4 packet forwarding
+sudo systemctl stop ufw.service
+sudo systemctl disable ufw.service
+sudo systemctl status ufw.service
+
+# enable IPv4 packet forwarding for k8s
+net.bridge.bridge-nf-call-iptables  = 1
 cat <<EOF | sudo tee /etc/sysctl.d/k8s.conf
+net.bridge.bridge-nf-call-ip6tables = 1
 net.ipv4.ip_forward = 1
 EOF
 sudo sysctl --system
-sysctl net.ipv4.ip_forward
 
-# install curl and helm
+sudo reboot
+
+# EC2 snapshot 1
+
+# Further Prepare OS
+sudo apt-get update
+sudo apt-get install -y \
+  apt-transport-https \
+  ca-certificates \
+  curl \
+  gpg \
+  lsb-release \
+  software-properties-common \
+  jq \
+  conntrack \
+  socat
+
+# install helm
 sudo apt-get install curl gpg apt-transport-https --yes
 curl -fsSL https://packages.buildkite.com/helm-linux/helm-debian/gpgkey | gpg --dearmor | sudo tee /usr/share/keyrings/helm.gpg > /dev/null
 echo "deb [signed-by=/usr/share/keyrings/helm.gpg] https://packages.buildkite.com/helm-linux/helm-debian/any/ any main" | sudo tee /etc/apt/sources.list.d/helm-stable-debian.list
@@ -28,6 +49,314 @@ sudo apt-get update
 sudo apt-get install helm
 helm version
 
+# EC2 snapshot 2
+
+# Load kernel modules
+cat <<EOF | sudo tee /etc/modules-load.d/k8s.conf
+overlay
+br_netfilter
+EOF
+
+sudo modprobe overlay
+sudo modprobe br_netfilter
+
+# install containerd v2.2.2
+sudo apt-get update
+sudo apt-get install -y containerd
+
+# generate default config
+sudo mkdir -p /etc/containerd
+containerd config default | sudo tee /etc/containerd/config.toml >/dev/null
+
+# set systemd cgroups
+sudo sed -i 's/SystemdCgroup = false/SystemdCgroup = true/' /etc/containerd/config.toml
+
+# restart containerd
+sudo systemctl restart containerd
+sudo systemctl enable containerd
+sudo systemctl status containerd --no-pager
+
+# install kubeadm, kubelet, kubectl
+sudo mkdir -p /etc/apt/keyrings
+
+curl -fsSL https://pkgs.k8s.io/core:/stable:/v1.35/deb/Release.key \
+  | sudo gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+
+echo 'deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v1.35/deb/ /' \
+  | sudo tee /etc/apt/sources.list.d/kubernetes.list
+
+sudo apt-get update
+
+# install Kubernetes 1.35.4 packages
+sudo apt-get install -y \
+  kubelet=1.35.4-* \
+  kubeadm=1.35.4-* \
+  kubectl=1.35.4-*
+
+sudo apt-mark hold kubelet kubeadm kubectl
+sudo systemctl enable kubelet
+kubeadm version
+kubectl version --client
+
+# ec2 snapshot 3
+
+# init k8s
+sudo kubeadm init \
+  --pod-network-cidr=10.10.0.0/16
+  --service-cidr=10.5.0.0/16 # new
+
+# config kubectl
+mkdir -p $HOME/.kube
+sudo cp /etc/kubernetes/admin.conf $HOME/.kube/config
+sudo chown $(id -u):$(id -g) $HOME/.kube/config
+kubectl get nodes
+# sudo kubeadm token create --print-join-command
+# sudo kubeadm join 172.31.2.73:6443 --token 7dam87.ete8x7xx6wpro024 --discovery-token-ca-cert-hash sha256:3fe90b471a87f4d12cdd7b40542d1b136652bcb5868c4e69902ee51ff4bb1ba0
+
+kubectl get nodes -o wide
+kubectl get pods -A
+
+# ingress
+helm upgrade --install ingress-nginx ingress-nginx \
+  --repo https://kubernetes.github.io/ingress-nginx \
+  --version 4.15.1 \
+  --namespace ingress-nginx \
+  --create-namespace \
+  --set controller.service.type=NodePort \
+  --set controller.service.nodePorts.http=30080 \
+  --set controller.service.nodePorts.https=30443
+
+kubectl wait --namespace ingress-nginx \
+  --for=condition=ready pod \
+  --selector=app.kubernetes.io/component=controller \
+  --timeout=300s
+
+kubectl get pods -n ingress-nginx
+kubectl get svc -n ingress-nginx
+kubectl get ingressclass
+
+# ec2 snapshot 4
+
+# AWS NLB in front of ingress-nginx
+# listeners: TCP 80  → target group TCP 30080, TCP 443 → target group TCP 30443
+# target groups: Target type: Instances, Targets: Kubernetes EC2 nodes, Health check: TCP
+# NLB SG:   Inbound TCP 80  from allowed users,  Inbound TCP 443 from allowed users
+# Kubernetes node SG:   Inbound TCP 30080 from NLB SG,   Inbound TCP 30443 from NLB SG
+
+sudo apt update
+sudo apt install -y curl unzip groff less
+curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+unzip awscliv2.zip
+sudo ./aws/install
+aws --version
+aws elbv2 describe-load-balancers   --names ingress   --query "LoadBalancers[0].DNSName"   --output text
+# ingress-2e450c9ceaa660d3.elb.us-east-1.amazonaws.com
+# for later
+export SITE_DOMAIN="ingress-2e450c9ceaa660d3.elb.us-east-1.amazonaws.com"
+
+# install cert-manager v1.20.2 (switch to helm method following)
+kubectl apply -f https://github.com/cert-manager/cert-manager/releases/download/v1.20.2/cert-manager.yaml
+kubectl wait --namespace cert-manager \
+  --for=condition=ready pod \
+  --selector=app.kubernetes.io/instance=cert-manager \
+  --timeout=300s
+kubectl get pods -n cert-manager
+kubectl get crd | grep cert-manager
+
+# create self-signed CA
+cat > 01-selfsigned-ca.yaml <<'EOF'
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: selfsigned-root-issuer
+spec:
+  selfSigned: {}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: static-site-root-ca
+  namespace: cert-manager
+spec:
+  isCA: true
+  commonName: static-site-root-ca
+  secretName: static-site-root-ca-secret
+  duration: 87600h
+  privateKey:
+    algorithm: ECDSA
+    size: 256
+  subject:
+    organizations:
+      - Static Site Internal CA
+  issuerRef:
+    name: selfsigned-root-issuer
+    kind: ClusterIssuer
+    group: cert-manager.io
+---
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: static-site-ca-issuer
+spec:
+  ca:
+    secretName: static-site-root-ca-secret
+EOF
+
+kubectl apply -f 01-selfsigned-ca.yaml
+
+##troubleshooting##
+# 443 healthz not present in cert-manager deployment 
+kubectl delete -f https://github.com/cert-manager/cert-manager/releases/download/v1.20.2/cert-manager.yaml
+
+helm repo add jetstack https://charts.jetstack.io
+helm repo update
+
+helm upgrade --install cert-manager jetstack/cert-manager \
+  --namespace cert-manager \
+  --create-namespace \
+  --version v1.20.2 \
+  --set crds.enabled=true \
+  --set global.leaderElection.namespace=cert-manager
+
+
+
+# label workers for readability
+ kubectl label node worker2 node-role.kubernetes.io/worker=worker
+ kubectl label node worker1 node-role.kubernetes.io/worker=worker
+ kubectl get nodes
+# stop
+
+kubectl wait --for=condition=Ready \
+  certificate/static-site-root-ca \
+  -n cert-manager \
+  --timeout=300s
+
+kubectl get clusterissuer
+kubectl get certificate -n cert-manager
+kubectl get secret static-site-root-ca-secret -n cert-manager
+
+
+
+
+
+#
+# create namespace and RBAC for site deployment
+cat > 02-rbac-static-site.yaml <<'EOF'
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: static-site
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: site-deployer
+  namespace: static-site
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: static-site-deployer
+  namespace: static-site
+rules:
+  - apiGroups: [""]
+    resources:
+      - configmaps
+      - services
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+
+  - apiGroups: [""]
+    resources:
+      - pods
+      - pods/log
+      - events
+      - secrets
+    verbs: ["get", "list", "watch"]
+
+  - apiGroups: ["apps"]
+    resources:
+      - deployments
+      - replicasets
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+
+  - apiGroups: ["networking.k8s.io"]
+    resources:
+      - ingresses
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+
+  - apiGroups: ["cert-manager.io"]
+    resources:
+      - certificates
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+
+  - apiGroups: ["cert-manager.io"]
+    resources:
+      - certificaterequests
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: static-site-deployer-binding
+  namespace: static-site
+subjects:
+  - kind: ServiceAccount
+    name: site-deployer
+    namespace: static-site
+roleRef:
+  kind: Role
+  name: static-site-deployer
+  apiGroup: rbac.authorization.k8s.io
+EOF
+
+kubectl apply -f 02-rbac-static-site.yaml
+
+kubectl auth can-i create deployments \
+  --as=system:serviceaccount:static-site:site-deployer \
+  -n static-site
+
+kubectl auth can-i create ingresses \
+  --as=system:serviceaccount:static-site:site-deployer \
+  -n static-site
+
+kubectl auth can-i create clusterissuers \
+  --as=system:serviceaccount:static-site:site-deployer
+
+# optional: create a kubeconfig for the deployer
+TOKEN=$(kubectl create token site-deployer -n static-site --duration=24h)
+KUBE_API=$(kubectl config view --minify -o jsonpath='{.clusters[0].cluster.server}')
+KUBE_CA=$(kubectl config view --raw --minify -o jsonpath='{.clusters[0].cluster.certificate-authority-data}')
+
+cat > site-deployer.kubeconfig <<EOF
+apiVersion: v1
+kind: Config
+clusters:
+- name: kubeadm-cluster
+  cluster:
+    server: ${KUBE_API}
+    certificate-authority-data: ${KUBE_CA}
+contexts:
+- name: site-deployer@kubeadm-cluster
+  context:
+    cluster: kubeadm-cluster
+    namespace: static-site
+    user: site-deployer
+current-context: site-deployer@kubeadm-cluster
+users:
+- name: site-deployer
+  user:
+    token: ${TOKEN}
+EOF
+
+kubectl --kubeconfig=site-deployer.kubeconfig auth can-i create deployments
+kubectl --kubeconfig=site-deployer.kubeconfig auth can-i create ingresses
+kubectl --kubeconfig=site-deployer.kubeconfig auth can-i create clusterissuers
+
+
+
+
+## ---------------------------------------------------------------------------------------------------------- ##
+## ---------------------------------------------------------------------------------------------------------- ##
 # install containerd 
 # https://kubernetes.io/docs/setup/production-environment/tools/kubeadm/install-kubeadm/#installing-runtime
 vi install.sh
@@ -53,6 +382,21 @@ sudo chmod 700 install.sh
 ./install.sh
 sudo apt install containerd.io
 sudo systemctl status containerd
+
+# install Cilium 1.19.3 but don't replace KubeProxy
+helm repo add cilium https://helm.cilium.io/
+helm repo update
+helm upgrade --install cilium cilium/cilium \
+  --version 1.19.3 \
+  --namespace kube-system \
+  --set kubeProxyReplacement=false
+
+# confirm Cilium ready on Control Plane node
+kubectl -n kube-system rollout status ds/cilium --timeout=300s
+kubectl get pods -n kube-system -l k8s-app=cilium
+kubectl get nodes
+
+# Run on worker nodes - join cluster
 
 
 # Installing kubeadm, kubelet and kubectl 
