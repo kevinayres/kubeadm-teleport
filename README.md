@@ -29,7 +29,8 @@ Provision nodes
 <img width="1634" height="324" alt="image" src="https://github.com/user-attachments/assets/1b9982c4-3632-4104-bd6d-c3e84370f7b7" />
 
 
-<img width="1684" height="1244" alt="image" src="https://github.com/user-attachments/assets/441b92ed-7217-4e58-a16a-234e605e93ec" />
+<img width="1672" height="941" alt="ChatGPT Image May 7, 2026, 10_42_17 AM" src="https://github.com/user-attachments/assets/deb0df93-9086-4b3f-a021-b873f58bcb5c" />
+
 
 ##VERSION COMPATABILITY
 Kubernetes:        1.35.4  
